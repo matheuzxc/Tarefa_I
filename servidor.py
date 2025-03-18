@@ -2,25 +2,33 @@ import paho.mqtt.client as mqtt
 import psutil
 import os
 import time
+from cryptography.fernet import Fernet
 
-# Callback de conexão ao broker MQTT
+def carregar_chave():
+    with open("chave_b.txt", "rb") as f:
+        return f.read()
+
+CHAVE = carregar_chave()
+cipher = Fernet(CHAVE)
+
 def connectMqtt(client, userdata, flags, rc):
     print(f"Conectado com o código de retorno {rc}")
     client.subscribe("sistema/comandos")
 
-# Callback para gerenciamento de requisições recebidas pelo MQTT
 def gerenciamentoRequisições(client, userdata, msg):
-    comando = msg.payload.decode()
-    print(f"Comando recebido: {comando}")
+    try:
+        comando = cipher.decrypt(msg.payload).decode()
+        print(f"Comando recebido: {comando}")
 
-    if comando == "obter_processos":
-        publicarProcessos(client)
-    elif comando == "obter_usuarios":
-        publicarUsuarios(client)
-    else:
-        print(f"Comando não reconhecido: {comando}")
+        if comando == "obter_processos":
+            publicarProcessos(client)
+        elif comando == "obter_usuarios":
+            publicarUsuarios(client)
+        else:
+            print(f"Comando não reconhecido: {comando}")
+    except Exception as e:
+        print(f"Erro na descriptografia: {str(e)}")
 
-# Publica a lista de processos ativos
 def publicarProcessos(client):
     processos = []
 
@@ -30,10 +38,9 @@ def publicarProcessos(client):
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
         processos.append("Erro ao acessar lista de processos")
 
-    # Publica os processos ou uma mensagem indicando que não há processos disponíveis
-    client.publish("sistema/processos", "\n".join(processos) if processos else "Nenhum processo encontrado.")
+    mensagem_criptografada = cipher.encrypt("\n".join(processos).encode())
+    client.publish("sistema/processos", mensagem_criptografada)
 
-# Publica a lista de usuários ativos
 def publicarUsuarios(client):
     usuarios = []
 
@@ -44,23 +51,15 @@ def publicarUsuarios(client):
     except Exception as e:
         usuarios.append(f"Erro ao obter usuários: {str(e)}")
 
-    # Publica os usuários ou uma mensagem indicando que não há usuários ativos
-    client.publish("sistema/usuarios", "\n".join(usuarios) if usuarios else "Nenhum usuário ativo encontrado.")
+    mensagem_criptografada = cipher.encrypt("\n".join(usuarios).encode())
+    client.publish("sistema/usuarios", mensagem_criptografada)
 
-# Configura o cliente MQTT
 mqtt_client = mqtt.Client()
-
-# Define as funções de callback
 mqtt_client.on_connect = connectMqtt
 mqtt_client.on_message = gerenciamentoRequisições
-
-# Conecta ao broker MQTT (localhost na porta 1883)
 mqtt_client.connect("localhost", 1883, 60)
-
-# Inicia o loop de rede para manter a conexão ativa
 mqtt_client.loop_start()
 
-# Mantém o programa rodando esperando comandos
 if __name__ == "__main__":
     try:
         while True:
